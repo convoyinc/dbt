@@ -17,6 +17,8 @@ from dbt.adapters.factory import load_adapter, get_relation_class_by_name
 
 from dbt.logger import GLOBAL_LOGGER as logger
 from dbt.utils import DBTConfigKeys
+from dbt.version import get_installed_version
+from dbt.semver import VersionSpecifier, versions_compatible
 import dbt.ui.printer
 
 DEFAULT_THREADS = 1
@@ -52,6 +54,15 @@ UNUSED_RESOURCE_CONFIGURATION_PATH_MESSAGE = """\
 WARNING: Configuration paths exist in your dbt_project.yml file which do not \
 apply to any resources.
 There are {} unused configuration paths:\n{}
+"""
+
+INVALID_VERSION_ERROR = """\
+This version of dbt is not supported with the '{package}' package.
+  Installed version of dbt: {installed}
+  Required version of dbt for '{package}': {version_spec}
+
+Check the requirements for the '{package}' package, or run dbt again with \
+--no-version-check
 """
 
 
@@ -212,7 +223,7 @@ class Project(object):
                  source_paths, macro_paths, data_paths, test_paths,
                  analysis_paths, docs_paths, target_path, clean_targets,
                  log_path, modules_path, quoting, models, on_run_start,
-                 on_run_end, archive, seeds, packages):
+                 on_run_end, archive, seeds, dbt_version, packages):
         self.project_name = project_name
         self.version = version
         self.project_root = project_root
@@ -233,6 +244,7 @@ class Project(object):
         self.on_run_end = on_run_end
         self.archive = archive
         self.seeds = seeds
+        self.dbt_version = dbt_version
         self.packages = packages
 
     @staticmethod
@@ -317,6 +329,12 @@ class Project(object):
         on_run_end = project_dict.get('on-run-end', [])
         archive = project_dict.get('archive', [])
         seeds = project_dict.get('seeds', {})
+        dbt_version_str = project_dict.get('require-dbt-version', '>=0.0.0')
+
+        try:
+            dbt_version = VersionSpecifier.from_version_string(dbt_version_str)
+        except dbt.exceptions.SemverException as e:
+            raise DbtProjectError(str(e))
 
         packages = package_config_from_data(packages_dict)
 
@@ -341,6 +359,7 @@ class Project(object):
             on_run_end=on_run_end,
             archive=archive,
             seeds=seeds,
+            dbt_version=dbt_version,
             packages=packages
         )
         # sanity check - this means an internal issue
@@ -386,6 +405,7 @@ class Project(object):
             'on-run-end': self.on_run_end,
             'archive': self.archive,
             'seeds': self.seeds,
+            'require-dbt-version': self.dbt_version.to_version_string()
         })
         if with_packages:
             result.update(self.packages.serialize())
@@ -801,7 +821,7 @@ class RuntimeConfig(Project, Profile):
                  macro_paths, data_paths, test_paths, analysis_paths,
                  docs_paths, target_path, clean_targets, log_path,
                  modules_path, quoting, models, on_run_start, on_run_end,
-                 archive, seeds, profile_name, target_name,
+                 archive, seeds, dbt_version, profile_name, target_name,
                  send_anonymous_usage_stats, use_colors, threads, credentials,
                  packages, args):
         # 'vars'
@@ -830,7 +850,8 @@ class RuntimeConfig(Project, Profile):
             on_run_end=on_run_end,
             archive=archive,
             seeds=seeds,
-            packages=packages,
+            dbt_version=dbt_version,
+            packages=packages
         )
         # 'profile'
         Profile.__init__(
@@ -878,6 +899,7 @@ class RuntimeConfig(Project, Profile):
             on_run_end=project.on_run_end,
             archive=project.archive,
             seeds=project.seeds,
+            dbt_version=project.dbt_version,
             packages=project.packages,
             profile_name=profile.profile_name,
             target_name=profile.target_name,
@@ -938,6 +960,16 @@ class RuntimeConfig(Project, Profile):
             Configuration(**self.serialize())
         except dbt.exceptions.ValidationException as e:
             raise DbtProjectError(str(e))
+
+        if getattr(self.args, 'version_check', False):
+            installed = get_installed_version()
+            if not versions_compatible(installed, self.dbt_version):
+                msg = INVALID_VERSION_ERROR.format(
+                    package=self.project_name,
+                    installed=installed.to_version_string(),
+                    version_spec=self.dbt_version.to_version_string()
+                )
+                raise DbtProjectError(msg)
 
     @classmethod
     def from_args(cls, args):

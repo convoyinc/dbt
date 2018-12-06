@@ -140,6 +140,10 @@ PROJECT_CONTRACT = {
             'type': 'object',
             'additionalProperties': True,
         },
+        # we validate the regex separately, using the pattern in dbt.semver
+        'require-dbt-version': {
+            'type': 'string',
+        },
     },
     'required': ['name', 'version'],
 }

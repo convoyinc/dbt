@@ -14,6 +14,7 @@ import dbt.exceptions
 from dbt.adapters.postgres import PostgresCredentials
 from dbt.adapters.redshift import RedshiftCredentials
 from dbt.contracts.project import PackageConfig
+from dbt.semver import VersionSpecifier
 
 
 @contextmanager
@@ -118,7 +119,8 @@ class ConfigTest(unittest.TestCase):
 
 
 class Args(object):
-    def __init__(self, profiles_dir=None, threads=None, profile=None, cli_vars=None):
+    def __init__(self, profiles_dir=None, threads=None, profile=None,
+                 cli_vars=None, version_check=None):
         self.profile = profile
         if threads is not None:
             self.threads = threads
@@ -126,6 +128,8 @@ class Args(object):
             self.profiles_dir = profiles_dir
         if cli_vars is not None:
             self.vars = cli_vars
+        if version_check is not None:
+            self.version_check = version_check
 
 
 class BaseConfigTest(unittest.TestCase):
@@ -588,6 +592,8 @@ class TestProject(BaseConfigTest):
         self.assertEqual(project.on_run_end, [])
         self.assertEqual(project.archive, [])
         self.assertEqual(project.seeds, {})
+        self.assertEqual(project.dbt_version,
+                         VersionSpecifier.from_version_string('>=0.0.0'))
         self.assertEqual(project.packages, PackageConfig(packages=[]))
         # just make sure str() doesn't crash anything, that's always
         # embarrassing
@@ -685,6 +691,7 @@ class TestProject(BaseConfigTest):
                     'post-hook': 'grant select on {{ this }} to bi_user',
                 },
             },
+            'require-dbt-version': '>=0.1.0',
         })
         packages = {
             'packages': [
@@ -756,6 +763,8 @@ class TestProject(BaseConfigTest):
                 'post-hook': 'grant select on {{ this }} to bi_user',
             },
         })
+        self.assertEqual(project.dbt_version,
+                         VersionSpecifier.from_version_string('>=0.1.0'))
         self.assertEqual(project.packages, PackageConfig(packages=[
             {
                 'local': 'foo',
@@ -797,6 +806,16 @@ class TestProject(BaseConfigTest):
             dbt.config.Project.from_project_root(self.project_dir, {})
 
         self.assertIn('no dbt_project.yml', str(exc.exception))
+
+    def test_invalid_version(self):
+        self.default_project_data['require-dbt-version'] = 'hello!'
+        with self.assertRaises(dbt.exceptions.DbtProjectError) as exc:
+            dbt.config.Project.from_project_config(self.default_project_data)
+
+    def test_unsupported_version(self):
+        self.default_project_data['require-dbt-version'] = '>99999.0.0'
+        # allowed, because the RuntimeConfig checks, not the Project itself
+        dbt.config.Project.from_project_config(self.default_project_data)
 
     def test__no_unused_resource_config_paths(self):
         self.default_project_data.update({
@@ -939,7 +958,6 @@ class TestProjectWithConfigs(BaseConfigTest):
         self.assertEqual(len(unused), 0)
 
 
-
 class TestProjectFile(BaseFileTest):
     def setUp(self):
         super(TestProjectFile, self).setUp()
@@ -1003,7 +1021,7 @@ class TestRuntimeConfig(BaseConfigTest):
     def test_from_parts(self):
         project = self.get_project()
         profile = self.get_profile()
-        config = dbt.config.RuntimeConfig.from_parts(project, profile, {})
+        config = dbt.config.RuntimeConfig.from_parts(project, profile, self.args)
 
         self.assertEqual(config.cli_vars, {})
         self.assertEqual(config.to_profile_info(), profile.to_profile_info())
@@ -1035,6 +1053,20 @@ class TestRuntimeConfig(BaseConfigTest):
         profile.use_colors = None
         with self.assertRaises(dbt.exceptions.DbtProjectError):
             dbt.config.RuntimeConfig.from_parts(project, profile, {})
+
+    def test_unsupported_version(self):
+        self.default_project_data['require-dbt-version'] = '>99999.0.0'
+        project = self.get_project()
+        profile = self.get_profile()
+        dbt.config.RuntimeConfig.from_parts(project, profile, {})
+
+    def test_unsupported_version_no_check(self):
+        self.default_project_data['require-dbt-version'] = '>99999.0.0'
+        self.args.version_check = False
+        project = self.get_project()
+        profile = self.get_profile()
+        dbt.config.RuntimeConfig.from_parts(project, profile, self.args)
+
 
 
 class TestRuntimeConfigFiles(BaseFileTest):
