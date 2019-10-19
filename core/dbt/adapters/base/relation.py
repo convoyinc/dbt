@@ -12,13 +12,15 @@ class BaseRelation(APIObject):
     CTE = "cte"
     MaterializedView = "materializedview"
     ExternalTable = "externaltable"
+    LocalTemporary = "localtemporary"
 
     RelationTypes = [
         Table,
         View,
         CTE,
         MaterializedView,
-        ExternalTable
+        ExternalTable,
+        LocalTemporary
     ]
 
     DEFAULTS = {

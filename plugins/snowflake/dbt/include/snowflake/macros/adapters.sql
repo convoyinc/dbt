@@ -79,6 +79,7 @@
            when table_type = 'VIEW' then 'view'
            when table_type = 'MATERIALIZED VIEW' then 'materializedview'
            when table_type = 'EXTERNAL TABLE' then 'externaltable'
+           when table_type = 'LOCAL TEMPORARY' then 'localtemporary'
            else table_type
       end as table_type
     from {{ information_schema }}.tables
