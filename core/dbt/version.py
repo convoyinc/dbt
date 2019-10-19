@@ -56,5 +56,5 @@ def get_version_information():
                 .format(version_msg))
 
 
-__version__ = '0.14.3'
+__version__ = '0.14.3-convoy'
 installed = get_installed_version()
